@@ -1,0 +1,154 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: alphalens
+
+---
+# CPU Compute Node Deployment (API serving, parsing, causal discovery)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alphalens-cpu-worker
+  namespace: alphalens
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: alphalens-cpu
+  template:
+    metadata:
+      labels:
+        app: alphalens-cpu
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: beta.kubernetes.io/instance-type
+                operator: In
+                values:
+                - m6i.4xlarge
+      containers:
+      - name: worker
+        image: alphalens:latest
+        command: ["python", "-m", "alphalens.orchestration.graph"]
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4"
+          limits:
+            memory: "16Gi"
+            cpu: "8"
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://postgres:postgres@timescaledb.alphalens.svc.cluster.local:5432/alphalens"
+        - name: REDIS_URL
+          value: "redis://redis.alphalens.svc.cluster.local:6379/0"
+        - name: KAFKA_SERVERS
+          value: "kafka.alphalens.svc.cluster.local:9092"
+
+---
+# GPU Compute Node Deployment (Model learning / training phases)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alphalens-gpu-learner
+  namespace: alphalens
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alphalens-gpu
+  template:
+    metadata:
+      labels:
+        app: alphalens-gpu
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: beta.kubernetes.io/instance-type
+                operator: In
+                values:
+                - p3.8xlarge
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: learner
+        image: alphalens:latest
+        command: ["python", "-m", "alphalens.models.dl_backbones"]
+        resources:
+          requests:
+            memory: "32Gi"
+            cpu: "8"
+            nvidia.com/gpu: "4"
+          limits:
+            memory: "64Gi"
+            cpu: "16"
+            nvidia.com/gpu: "4"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow.alphalens.svc.cluster.local:5000"
+
+---
+# Database Deployment (TimescaleDB / Postgres running on Database Pool nodes)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: timescaledb
+  namespace: alphalens
+spec:
+  serviceName: "timescaledb"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: timescaledb
+  template:
+    metadata:
+      labels:
+        app: timescaledb
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: beta.kubernetes.io/instance-type
+                operator: In
+                values:
+                - r6g.2xlarge
+      containers:
+      - name: timescaledb
+        image: timescale/timescaledb:latest-pg15
+        ports:
+        - containerPort: 5432
+          name: postgres
+        resources:
+          requests:
+            memory: "16Gi"
+            cpu: "4"
+          limits:
+            memory: "32Gi"
+            cpu: "8"
+        env:
+        - name: POSTGRES_DB
+          value: "alphalens"
+        - name: POSTGRES_PASSWORD
+          value: "postgres"
+        volumeMounts:
+        - name: timescaledb-storage
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: timescaledb-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "gp3"
+      resources:
+        requests:
+          storage: 500Gi

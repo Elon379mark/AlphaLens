@@ -1,0 +1,14 @@
+pydantic>=2.0.0
+langgraph
+streamlit
+plotly
+pandas
+numpy
+scipy
+psycopg2-binary
+redis
+kafka-python
+protobuf
+sqlalchemy>=2.0.0
+asyncpg
+aiosqlite

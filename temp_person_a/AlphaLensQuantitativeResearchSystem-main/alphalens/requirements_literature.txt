@@ -1,0 +1,25 @@
+# AlphaLens — Literature Agent Requirements
+# Install with: pip install -r requirements_literature.txt
+
+# PDF Extraction
+pymupdf>=1.23
+pypdf>=3.0
+fpdf>=1.7.2
+
+# Text Splitting
+langchain>=0.2
+langchain-community>=0.2
+langchain-text-splitters>=0.2
+
+# Embeddings & Reranking
+sentence-transformers>=2.6
+
+# Vector Store
+chromadb>=0.5
+
+# LLM API (Groq — free)
+groq>=0.9.0
+
+# Testing
+pytest>=8.0
+pytest-mock>=3.12

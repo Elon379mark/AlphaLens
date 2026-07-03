@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package alphalens;
+
+enum Direction {
+  POSITIVE = 0;
+  NEGATIVE = 1;
+}
+
+message HypothesisPayload {
+  string hypothesis_id = 1;
+  string predictor_variable = 2;
+  string target_asset_class = 3;
+  Direction predicted_direction = 4;
+  double confidence = 5;
+  string theoretical_mechanism = 6;
+  repeated string source_references = 7;
+}
+
+message AgentMessage {
+  string sender = 1;
+  string recipient = 2;
+  double timestamp = 3;
+  int32 priority = 4;
+  
+  // Dynamic payloads representing the shared state variables
+  HypothesisPayload hypothesis = 5;
+  double p_value = 6;
+  double ate_magnitude = 7;
+  double sharpe_ratio = 8;
+  double information_coefficient = 9;
+  double information_ratio = 10;
+  double half_life_days = 11;
+  string error_message = 12;
+}
