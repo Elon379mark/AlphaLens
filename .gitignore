@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+data/raw/
+data/processed/
+data/vectors/
+models/
+outputs/
+.env
+*.ckpt
+*.pt
