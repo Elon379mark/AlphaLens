@@ -38,12 +38,15 @@ def retrieve(
     return retrieved
 
 
+import torch
+
 _reranker_instance = None
 
 def get_reranker():
     global _reranker_instance
     if _reranker_instance is None:
-        _reranker_instance = CrossEncoder(RERANKER_MODEL)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        _reranker_instance = CrossEncoder(RERANKER_MODEL, device=device)
     return _reranker_instance
 
 def rerank(

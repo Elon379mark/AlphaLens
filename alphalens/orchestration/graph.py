@@ -11,6 +11,12 @@ Graph Flow:
     signal_agent
          |
          v
+    deep_learning_agent  (TFT, N-BEATS, PatchTST, Ensemble, Regime)
+         |
+         v
+    gnn_agent  (GAT cross-asset modeling)
+         |
+         v
     causal_validation_agent
          |
     [ROUTER: p_value < 0.05 AND sharpe_ratio >= 1.0]
@@ -34,12 +40,34 @@ from typing_extensions import TypedDict
 logger = logging.getLogger(__name__)
 
 from alphalens.agents.memory import AgentMemoryEngine
+from alphalens.agents.deep_learning_node import deep_learning_agent_node as real_dl_node
+from alphalens.agents.gnn_node import gnn_agent_node as real_gnn_node
 
 _memory_engine = AgentMemoryEngine()
 
 from alphalens.core.utils import run_sync
 from alphalens.core.state import AlphaLensState as GraphState
 
+
+# ============================================================
+# SECTION 1.5: NEW AGENT NODE WRAPPERS (DL + GNN)
+# ============================================================
+
+def _wrap_dl_node(state: GraphState) -> dict[str, Any]:
+    """Wrapper: Deep Learning Agent (TFT, N-BEATS, PatchTST, Ensemble, Regime)."""
+    logger.info(f"[DeepLearningAgent] Starting | run_id={state.get('run_id')}")
+    result = real_dl_node(state)
+    logger.info(f"[DeepLearningAgent] Complete | regime={result.get('current_regime', 'N/A')}")
+    return result
+
+
+def _wrap_gnn_node(state: GraphState) -> dict[str, Any]:
+    """Wrapper: GNN Agent (GAT cross-asset modeling)."""
+    logger.info(f"[GNNAgent] Starting | run_id={state.get('run_id')}")
+    result = real_gnn_node(state)
+    n_edges = len(result.get("graph_edges", []))
+    logger.info(f"[GNNAgent] Complete | edges={n_edges}")
+    return result
 
 
 # ============================================================
@@ -392,6 +420,8 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
         START
           -> literature_agent
           -> signal_agent
+          -> deep_learning_agent
+          -> gnn_agent
           -> causal_validation_agent
           -> [causal_router]
               -> portfolio_agent -> END
@@ -405,6 +435,8 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
     # --- Register all nodes ---
     graph.add_node("literature_agent", literature_agent_node)
     graph.add_node("signal_agent", signal_agent_node)
+    graph.add_node("deep_learning_agent", _wrap_dl_node)
+    graph.add_node("gnn_agent", _wrap_gnn_node)
     graph.add_node("causal_validation_agent", causal_validation_agent_node)
     graph.add_node("portfolio_agent", portfolio_agent_node)
     graph.add_node("rejection_refinement_agent", rejection_refinement_agent_node)
@@ -412,7 +444,9 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
     # --- Wire linear edges ---
     graph.add_edge(START, "literature_agent")
     graph.add_edge("literature_agent", "signal_agent")
-    graph.add_edge("signal_agent", "causal_validation_agent")
+    graph.add_edge("signal_agent", "deep_learning_agent")
+    graph.add_edge("deep_learning_agent", "gnn_agent")
+    graph.add_edge("gnn_agent", "causal_validation_agent")
 
     # --- Wire conditional routing edges ---
     graph.add_conditional_edges(

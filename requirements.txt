@@ -12,3 +12,7 @@ protobuf
 sqlalchemy>=2.0.0
 asyncpg
 aiosqlite
+scikit-learn
+torch
+shap
+hmmlearn

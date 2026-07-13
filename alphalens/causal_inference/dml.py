@@ -34,6 +34,10 @@ class DoubleMachineLearningATE:
         if not np.all(np.isin(unique_t, [0, 1, 0.0, 1.0, True, False])):
             raise ValueError("Treatment variable T must be binary (containing only 0, 1, True, or False).")
 
+        if len(unique_t) < 2:
+            logger.warning("Treatment variable has only one class. DML cannot estimate ATE. Returning defaults.")
+            return 0.0, 1.0
+
         # Initialise cross-fitting folds
         kf = KFold(n_splits=self.n_folds, shuffle=True, random_state=42)
         
@@ -51,7 +55,11 @@ class DoubleMachineLearningATE:
             m_model.fit(X_train, T_train)
             
             # Predict probabilities, clip to avoid division by zero
-            preds_m = m_model.predict_proba(X_val)[:, 1]
+            if len(m_model.classes_) > 1:
+                preds_m = m_model.predict_proba(X_val)[:, 1]
+            else:
+                single_class = m_model.classes_[0]
+                preds_m = np.ones(len(X_val)) if single_class == 1 else np.zeros(len(X_val))
             m_hat[val_idx] = np.clip(preds_m, 0.01, 0.99)
             
             # 2. Fit Outcome regression model: predicting Y from X

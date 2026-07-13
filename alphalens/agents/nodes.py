@@ -118,22 +118,28 @@ def literature_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # 1. Retrieve context from ChromaDB using Person A's RAG pipeline
     try:
-        PDF_DIR = os.getenv("PDF_DIR", "data/raw/pdfs")
-        docs = load_pdf_directory(PDF_DIR)
-        
-        from alphalens.agents.literature.parser import clean_text, extract_paper_metadata, remove_references_section
-        for d in docs:
-            d["full_text"] = remove_references_section(clean_text(d["full_text"]))
-            d["metadata"] = extract_paper_metadata(d["full_text"])
-
-        chunks = chunk_all_documents(docs)
-        model = _get_embedding_model()
-        chunks = embed_chunks(chunks, model)
-
         client = get_chroma_client()
         collection = get_or_create_collection(client)
-        if chunks:
-            upsert_chunks(collection, chunks)
+        
+        # Only ingest if collection is empty
+        if collection.count() == 0:
+            logger.info("[Literature Agent] Vector collection is empty. Ingesting PDFs...")
+            PDF_DIR = os.getenv("PDF_DIR", "data/raw/pdfs")
+            docs = load_pdf_directory(PDF_DIR)
+            
+            from alphalens.agents.literature.parser import clean_text, extract_paper_metadata, remove_references_section
+            for d in docs:
+                d["full_text"] = remove_references_section(clean_text(d["full_text"]))
+                d["metadata"] = extract_paper_metadata(d["full_text"])
+
+            chunks = chunk_all_documents(docs)
+            model = _get_embedding_model()
+            chunks = embed_chunks(chunks, model)
+            if chunks:
+                upsert_chunks(collection, chunks)
+        else:
+            logger.info("[Literature Agent] Vector collection found. Skipping PDF ingestion.")
+            model = _get_embedding_model()
 
         q_emb = embed_query(query, model)
         cands = retrieve(collection, q_emb, n_results=15)
@@ -318,7 +324,7 @@ def signal_gen_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"[Signal Gen Agent] Downstream time series extracted for ticker: {selected_ticker}")
 
     ticker_df = ohlcv.xs(selected_ticker, level="ticker")
-    ticker_features = raw_features.xs(selected_ticker, level="ticker")
+    ticker_features = raw_features.xs(selected_ticker, level="ticker").reindex(ticker_df.index)
 
     signal_values = ticker_features[feature_name].fillna(0.0).values.tolist()
     returns_values = ticker_df["returns"].fillna(0.0).values.tolist()

@@ -81,6 +81,24 @@ class AlphaLensState(TypedDict):
     rejection_reason: NotRequired[str]                # Human-readable rejection explanation
     refinement_suggestions: NotRequired[List[str]]    # Hints passed back to literature agent
 
+    # === Regime Detection (Phase 3) ===
+    current_regime: NotRequired[str]                  # "bull", "bear", or "high_vol"
+    regime_probabilities: NotRequired[Dict[str, float]]  # Regime -> probability
+    changepoints: NotRequired[List[int]]              # Detected structural break indices
+    model_contributions: NotRequired[Dict[str, float]]  # Model -> ensemble weight
+
+    # === Explainability (Phase 4) ===
+    shap_importances: NotRequired[Dict[str, float]]   # Feature -> SHAP importance
+    explainability_report: NotRequired[Dict[str, Any]]  # Full ExplainabilityReport dict
+
+    # === Signal values for downstream agents ===
+    signal_values: NotRequired[List[float]]           # Signal time series
+    returns_values: NotRequired[List[float]]          # Return time series
+    close_prices: NotRequired[List[float]]            # Price time series
+    volumes: NotRequired[List[float]]                 # Volume time series
+    volatilities: NotRequired[List[float]]            # Volatility time series
+    signal_passes_gate: NotRequired[bool]             # Signal gating result
+
     # === Test & Compatibility fields (from GraphState) ===
     hypothesis: NotRequired[Any]                      # For tracking full hypothesis schemas in tests
     half_life_days: NotRequired[float]                # Mock signal duration in tests

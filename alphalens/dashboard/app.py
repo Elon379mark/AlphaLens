@@ -606,6 +606,10 @@ with st.sidebar:
         ("◇", "Risk Analytics", "CVaR, drawdown, tail risk"),
         ("▣", "Portfolio Lab", "Black-Litterman & optimization"),
         ("⫘", "Signal Scanner", "IC, ICIR, half-life metrics"),
+        ("🧠", "Deep Learning", "TFT, N-BEATS, PatchTST ensemble"),
+        ("🕸", "GNN (GAT)", "Cross-asset graph attention"),
+        ("📊", "Regime Detection", "HMM bull/bear/high-vol"),
+        ("🔍", "Explainability", "SHAP & causal attribution"),
     ]
     for icon, name, desc in modules:
         st.markdown(
@@ -634,9 +638,16 @@ with st.sidebar:
     st.markdown(
         '<div style="text-align:center;padding:8px 0;">'
         '<div style="font-family:JetBrains Mono;font-size:0.6rem;color:var(--text-muted);">'
-        'GROQ · LLaMA 3.3 70B · Quantitative Research</div></div>',
+        'GROQ · LLaMA 3.3 70B · TFT · N-BEATS · PatchTST · GAT</div></div>',
         unsafe_allow_html=True,
     )
+
+    st.markdown("---")
+    st.markdown('<div class="sidebar-label">Pipeline Control</div>', unsafe_allow_html=True)
+
+    if st.button("🚀 Run Full Pipeline", use_container_width=True, type="primary", key="run_pipeline_btn"):
+        st.session_state.run_pipeline = True
+        st.rerun()
 
 # ---------------------------------------------------------------------------
 # Session State
@@ -645,6 +656,159 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "charts" not in st.session_state:
     st.session_state.charts = {}
+
+# ---------------------------------------------------------------------------
+# Pipeline Execution Handler
+# ---------------------------------------------------------------------------
+if st.session_state.get("run_pipeline", False):
+    st.session_state.run_pipeline = False
+
+    st.markdown(
+        '<div class="landing-container">'
+        '<div class="landing-logo">◈</div>'
+        '<div class="landing-title"><span>AlphaLens</span> Full Pipeline</div>'
+        '<div class="landing-tagline">Running 7-agent autonomous research pipeline...</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Pipeline progress
+    progress_bar = st.progress(0, text="Initializing pipeline...")
+    status_area = st.empty()
+
+    try:
+        from alphalens.orchestration.graph import run_pipeline as _run_pipeline
+
+        progress_bar.progress(10, text="📚 Literature Agent — generating hypothesis...")
+        result = _run_pipeline(predictor_variable="momentum_12_1", target_asset_class="US_EQUITY")
+        progress_bar.progress(100, text="✅ Pipeline complete!")
+
+        # Display results
+        st.markdown("---")
+
+        # Pipeline Status
+        routing = result.get("routing_decision", "UNKNOWN")
+        status_color = "var(--accent-emerald)" if routing == "ACCEPTED" else "#f43f5e"
+        st.markdown(
+            f'<div style="text-align:center;padding:20px;">'
+            f'<div style="font-size:1.4rem;font-weight:700;color:{status_color};">'
+            f'{"✅ HYPOTHESIS ACCEPTED" if routing == "ACCEPTED" else "❌ HYPOTHESIS REJECTED"}'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        # Metrics Row
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Sharpe Ratio", f"{result.get('sharpe_ratio', 0):.2f}")
+        with col2:
+            st.metric("p-value", f"{result.get('p_value', 1.0):.4f}")
+        with col3:
+            st.metric("ATE", f"{result.get('ate_magnitude', 0):.4f}")
+        with col4:
+            regime = result.get("current_regime", "N/A")
+            st.metric("Regime", regime.upper() if regime else "N/A")
+
+        # Portfolio Weights
+        weights = result.get("portfolio_weights", {})
+        if weights:
+            st.markdown("### 💼 Portfolio Allocation")
+            fig_port = go.Figure(data=[go.Pie(
+                labels=list(weights.keys()),
+                values=list(weights.values()),
+                hole=0.45,
+                marker=dict(colors=["#00f0ff", "#d946ef", "#00ff88", "#fbbf24", "#f43f5e"]),
+                textinfo="label+percent",
+                textfont=dict(color="#f3f4f6", size=11),
+            )])
+            fig_port.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#cbd5e1"),
+                showlegend=False,
+                height=300,
+                margin=dict(t=10, b=10, l=10, r=10),
+            )
+            st.plotly_chart(fig_port, use_container_width=True)
+
+        # Ensemble Predictions
+        ensemble = result.get("ensemble_predictions", {})
+        if ensemble:
+            st.markdown("### 🧠 Ensemble Forecast (TFT + N-BEATS + PatchTST)")
+            horizons = sorted(ensemble.keys(), key=lambda x: int(x))
+            vals = [float(ensemble[h]) for h in horizons]
+            fig_ens = go.Figure(data=[go.Bar(
+                x=[f"{h}d" for h in horizons],
+                y=vals,
+                marker=dict(color=["#00f0ff", "#d946ef", "#00ff88"]),
+                text=[f"{v:.6f}" for v in vals],
+                textposition="outside",
+                textfont=dict(color="#f3f4f6", size=10),
+            )])
+            fig_ens.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#cbd5e1", family="JetBrains Mono", size=10),
+                xaxis=dict(showgrid=False, title="Forecast Horizon"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(30,58,138,0.15)", title="Predicted Return"),
+                height=250,
+                margin=dict(t=10, b=40, l=50, r=10),
+            )
+            st.plotly_chart(fig_ens, use_container_width=True)
+
+        # Model Contributions
+        contributions = result.get("model_contributions", {})
+        if contributions:
+            st.markdown("### 📊 Model Ensemble Weights")
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.metric("TFT", f"{contributions.get('tft', 0):.1%}")
+            with col_b:
+                st.metric("N-BEATS", f"{contributions.get('nbeats', 0):.1%}")
+            with col_c:
+                st.metric("PatchTST", f"{contributions.get('patchtst', 0):.1%}")
+
+        # Graph Edges (GAT)
+        graph_edges = result.get("graph_edges", [])
+        if graph_edges:
+            st.markdown("### 🕸️ Cross-Asset Graph (GAT)")
+            edge_text = ", ".join([f"{e.get('source','?')}↔{e.get('target','?')}" for e in graph_edges[:10]])
+            st.markdown(f"*{len(graph_edges)} edges discovered:* {edge_text}")
+
+        # Regime Probabilities
+        regime_probs = result.get("regime_probabilities", {})
+        if regime_probs:
+            st.markdown("### 📈 Regime Probabilities")
+            fig_regime = go.Figure(data=[go.Bar(
+                x=list(regime_probs.keys()),
+                y=list(regime_probs.values()),
+                marker=dict(color=["#00ff88", "#f43f5e", "#fbbf24"]),
+                text=[f"{v:.1%}" for v in regime_probs.values()],
+                textposition="outside",
+                textfont=dict(color="#f3f4f6", size=10),
+            )])
+            fig_regime.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#cbd5e1", family="JetBrains Mono", size=10),
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor="rgba(30,58,138,0.15)", range=[0, 1]),
+                height=220,
+                margin=dict(t=10, b=30, l=40, r=10),
+            )
+            st.plotly_chart(fig_regime, use_container_width=True)
+
+        # Rejection info
+        if result.get("rejection_reason"):
+            st.warning(f"**Rejection Reason:** {result['rejection_reason']}")
+            st.info(f"**Iterations:** {result.get('iteration', 0)}")
+
+    except Exception as e:
+        progress_bar.progress(100, text="❌ Pipeline failed")
+        st.error(f"Pipeline execution failed: {e}")
+        logger.error(f"Pipeline execution error: {e}", exc_info=True)
+
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # Main Area
