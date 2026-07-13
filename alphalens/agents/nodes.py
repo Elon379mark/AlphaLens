@@ -178,46 +178,16 @@ def literature_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             + "\n".join(f"- {s}" for s in refinement.get("suggestions", []))
         )
 
-    # 2. Ask the LLM to reason and produce a hypothesis
-    llm = _get_llm(temperature=0.4)
-
-    system_prompt = (
-        "You are the Literature Agent in the AlphaLens autonomous quant platform. "
-        "Your job is to read academic research context and generate exactly ONE "
-        "quantitative trading hypothesis.\n\n"
-        "You MUST respond with ONLY valid JSON matching this schema:\n"
-        "{\n"
-        '  "predictor_variable": "string (the variable name, e.g. credit_spread_slope)",\n'
-        '  "target_asset_class": "string (e.g. US_HY_bonds, US_equities)",\n'
-        '  "predicted_direction": "positive" or "negative",\n'
-        '  "confidence": float between 0.0 and 1.0,\n'
-        '  "theoretical_mechanism": "string explaining the causal economic reasoning"\n'
-        "}\n\n"
-        "RULES:\n"
-        "- Do NOT introduce look-ahead bias.\n"
-        "- Cite evidence from the context for all claims.\n"
-        "- Be specific about the predictor variable name.\n"
-        "- Respond ONLY with JSON, no markdown, no explanation."
-        f"{refinement_context}"
-    )
-
-    user_prompt = f"RESEARCH CONTEXT:\n{context}\n\nQUERY: {query}"
-
-    response = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt),
-    ])
-
-    # 3. Parse LLM output into our validated schema
+    # 2. Run Advanced Agentic Patterns Pipeline
     try:
-        raw = response.content.strip()
-        # Strip markdown code fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        parsed = json.loads(raw)
-
+        if 'reranked' in locals() and reranked:
+            chunks = [c["text"] for c in reranked]
+        else:
+            chunks = [context]
+            
+        from alphalens.agents.patterns import run_agentic_hypothesis_generation
+        parsed = run_agentic_hypothesis_generation(query, chunks)
+        
         hypothesis = HypothesisSchema(
             hypothesis_id=f"H-{uuid.uuid4().hex[:6].upper()}",
             predictor_variable=parsed.get("predictor_variable", "unknown"),
@@ -228,7 +198,7 @@ def literature_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             source_references=sources[:3],
         )
     except Exception as e:
-        logger.warning(f"[Literature Agent] LLM JSON parse failed: {e}. Using RAG fallback.")
+        logger.warning(f"[Literature Agent] Agentic patterns pipeline failed: {e}. Using RAG fallback.")
         rag = RAGPipeline()
         lit_agent = LiteratureAgent(rag)
         hypothesis = lit_agent.generate_hypothesis(query)

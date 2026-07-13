@@ -182,7 +182,7 @@ def causal_validation_agent_node(state: GraphState) -> dict[str, Any]:
     """
     NODE: Causal Validation Agent
     ------------------------------
-    Person B wiring: Populates p_value + sharpe_ratio that drive the router (Contract 2).
+    Person B wiring: Populates p_value and ATE fields.
     Person A implements: PC-algorithm DAG discovery, FCI model, 5-fold DML estimator
                          for Average Treatment Effect (ATE).
 
@@ -190,10 +190,7 @@ def causal_validation_agent_node(state: GraphState) -> dict[str, Any]:
         - hypothesis_id, feature_matrix_path, information_coefficient
 
     Outputs written to state:
-        - p_value, ate_magnitude, dag_path, sharpe_ratio, causal_validated_at
-
-    CRITICAL (Contract 2): p_value and sharpe_ratio drive routing. Person A MUST
-    populate these two fields correctly or the router will default to rejection.
+        - p_value, ate_magnitude, dag_path, causal_validated_at
     """
     logger.info(f"[CausalAgent] Running causal validation | hypothesis_id={state.get('hypothesis_id')}")
 
@@ -201,7 +198,6 @@ def causal_validation_agent_node(state: GraphState) -> dict[str, Any]:
     # PERSON A: Replace this stub with real PC-algorithm + DML estimator
     # ----------------------------------------------------------------
     from alphalens.agents.nodes import causal_validation_agent_node as real_causal_node
-    from alphalens.agents.nodes import backtest_agent_node as real_backtest_node
     
     real_state = {
         "hypothesis": state.get("hypothesis"),
@@ -218,24 +214,58 @@ def causal_validation_agent_node(state: GraphState) -> dict[str, Any]:
     p_val = causal_out.get("p_value", 1.0)
     ate = causal_out.get("ate_magnitude", 0.0)
     
-    backtest_out = real_backtest_node({**real_state, **causal_out})
-    sharpe = backtest_out.get("sharpe_ratio", 0.0)
-    
     mock_output = {
         "p_value": p_val,
         "ate_magnitude": ate,
         "dag_path": f"/data/dags/{state.get('hypothesis_id', 'unknown')}.json",
-        "sharpe_ratio": sharpe,
         "causal_validated_at": datetime.now(timezone.utc).isoformat(),
         "status": "causal_complete",
     }
     # ----------------------------------------------------------------
 
-    logger.info(
-        f"[CausalAgent] p_value={mock_output['p_value']} | "
-        f"sharpe={mock_output['sharpe_ratio']} | "
-        f"ATE={mock_output['ate_magnitude']}"
-    )
+    logger.info(f"[CausalAgent] p_value={mock_output['p_value']} | ATE={mock_output['ate_magnitude']}")
+    return mock_output
+
+
+def backtest_agent_node(state: GraphState) -> dict[str, Any]:
+    """
+    NODE: Backtesting Agent
+    -----------------------
+    Rigorously evaluates causally validated signals under realistic market conditions,
+    including transaction costs, market impact, slippage, and survivorship bias correction.
+
+    Inputs consumed from state:
+        - signal_values, close_prices, volumes, volatilities, hypothesis
+
+    Outputs written to state:
+        - sharpe_ratio, max_drawdown, total_return, portfolio_values
+    """
+    logger.info(f"[BacktestAgent] Running backtest simulation | hypothesis_id={state.get('hypothesis_id')}")
+
+    from alphalens.agents.nodes import backtest_agent_node as real_backtest_node
+
+    real_state = {
+        "hypothesis": state.get("hypothesis"),
+        "run_id": state.get("run_id"),
+        "signal_values": state.get("signal_values", []),
+        "returns_values": state.get("returns_values", []),
+        "close_prices": state.get("close_prices", []),
+        "volumes": state.get("volumes", []),
+        "volatilities": state.get("volatilities", []),
+        "agent_logs": [],
+    }
+
+    backtest_out = real_backtest_node(real_state)
+
+    mock_output = {
+        "sharpe_ratio": backtest_out.get("sharpe_ratio", 0.0),
+        "max_drawdown": backtest_out.get("max_drawdown", 0.0),
+        "total_return": backtest_out.get("total_return", 0.0),
+        "portfolio_values": backtest_out.get("portfolio_values", []),
+        "status": "backtest_complete",
+    }
+
+    logger.info(f"[BacktestAgent] Sharpe={mock_output['sharpe_ratio']} | Drawdown={mock_output['max_drawdown']}")
     return mock_output
 
 
@@ -351,31 +381,37 @@ def rejection_refinement_agent_node(state: GraphState) -> dict[str, Any]:
 # SECTION 3: ROUTING LOGIC (Contract 2 - Person B owns)
 # ============================================================
 
-def causal_router(state: GraphState) -> Literal["portfolio_agent", "rejection_refinement_agent"]:
+def causal_router(state: GraphState) -> Literal["backtest_agent", "rejection_refinement_agent"]:
     """
-    ROUTER: Statistical Gating (Contract 2)
-    ----------------------------------------
-    Person B owns this routing logic entirely.
-    Routes to portfolio construction if BOTH conditions are met:
-        1. p_value < 0.05  (statistical significance)
-        2. sharpe_ratio >= 1.0  (economic significance)
-
+    ROUTER: Causal Validation Gating
+    --------------------------------
+    Routes to Backtesting Agent if p_value < 0.05.
     Falls back to rejection & refinement loop otherwise.
     """
     p_value = state.get("p_value", 1.0)
+
+    if p_value < 0.05:
+        logger.info(f"[Router] ROUTE_TO_BACKTESTING | p_value={p_value} < 0.05")
+        return "backtest_agent"
+    else:
+        logger.warning(f"[Router] ROUTE_TO_REJECTION_AND_REFINEMENT_LOOP | p_value={p_value} >= 0.05")
+        return "rejection_refinement_agent"
+
+
+def backtest_router(state: GraphState) -> Literal["portfolio_agent", "rejection_refinement_agent"]:
+    """
+    ROUTER: Performance Gating
+    ---------------------------
+    Routes to Portfolio Construction Agent if Sharpe Ratio >= 1.0.
+    Falls back to rejection & refinement loop otherwise.
+    """
     sharpe_ratio = state.get("sharpe_ratio", 0.0)
 
-    if p_value < 0.05 and sharpe_ratio >= 1.0:
-        logger.info(
-            f"[Router] ROUTE_TO_PORTFOLIO_CONSTRUCTION | "
-            f"p_value={p_value} | sharpe_ratio={sharpe_ratio}"
-        )
+    if sharpe_ratio >= 1.0:
+        logger.info(f"[Router] ROUTE_TO_PORTFOLIO_CONSTRUCTION | sharpe_ratio={sharpe_ratio} >= 1.0")
         return "portfolio_agent"
     else:
-        logger.warning(
-            f"[Router] ROUTE_TO_REJECTION_AND_REFINEMENT_LOOP | "
-            f"p_value={p_value} | sharpe_ratio={sharpe_ratio}"
-        )
+        logger.warning(f"[Router] ROUTE_TO_REJECTION_AND_REFINEMENT_LOOP | sharpe_ratio={sharpe_ratio} < 1.0")
         return "rejection_refinement_agent"
 
 
@@ -438,6 +474,7 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
     graph.add_node("deep_learning_agent", _wrap_dl_node)
     graph.add_node("gnn_agent", _wrap_gnn_node)
     graph.add_node("causal_validation_agent", causal_validation_agent_node)
+    graph.add_node("backtest_agent", backtest_agent_node)
     graph.add_node("portfolio_agent", portfolio_agent_node)
     graph.add_node("rejection_refinement_agent", rejection_refinement_agent_node)
 
@@ -452,6 +489,15 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
     graph.add_conditional_edges(
         "causal_validation_agent",
         causal_router,
+        {
+            "backtest_agent": "backtest_agent",
+            "rejection_refinement_agent": "rejection_refinement_agent",
+        }
+    )
+
+    graph.add_conditional_edges(
+        "backtest_agent",
+        backtest_router,
         {
             "portfolio_agent": "portfolio_agent",
             "rejection_refinement_agent": "rejection_refinement_agent",
@@ -588,15 +634,13 @@ class AlphaLensGraph:
                 res = causal_validation_agent_fn(state)
             else:
                 res = causal_validation_agent_node(state)
+            return res
 
-            # In legacy graph, backtest agent executed after causal validation.
-            # Here we simulate this by running backtest_agent_fn if p_value < 0.05
-            merged_state = {**state, **res}
-            p_val = merged_state.get("p_value", 1.0)
-            if backtest_agent_fn and p_val < 0.05:
-                backtest_res = backtest_agent_fn(merged_state)
-                res.update(backtest_res)
-
+        def backtest_wrapper(state: GraphState) -> dict[str, Any]:
+            if backtest_agent_fn:
+                res = backtest_agent_fn(state)
+            else:
+                res = backtest_agent_node(state)
             return res
 
         def portfolio_wrapper(state: GraphState) -> dict[str, Any]:
@@ -610,6 +654,7 @@ class AlphaLensGraph:
         graph.add_node("literature_agent", lit_wrapper)
         graph.add_node("signal_agent", signal_wrapper)
         graph.add_node("causal_validation_agent", causal_wrapper)
+        graph.add_node("backtest_agent", backtest_wrapper)
         graph.add_node("portfolio_agent", portfolio_wrapper)
         graph.add_node("rejection_refinement_agent", rejection_refinement_agent_node)
 
@@ -622,6 +667,16 @@ class AlphaLensGraph:
         graph.add_conditional_edges(
             "causal_validation_agent",
             causal_router,
+            {
+                "backtest_agent": "backtest_agent",
+                "rejection_refinement_agent": "rejection_refinement_agent",
+            }
+        )
+
+        # Backtest Router
+        graph.add_conditional_edges(
+            "backtest_agent",
+            backtest_router,
             {
                 "portfolio_agent": "portfolio_agent",
                 "rejection_refinement_agent": "rejection_refinement_agent",
