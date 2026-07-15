@@ -56,6 +56,7 @@ def train_patchtst(model, train_loader, val_loader, max_epochs: int = MAX_EPOCHS
         mlflow.log_param("max_epochs", max_epochs)
         mlflow.log_param("learning_rate", LEARNING_RATE)
 
+        first_batch_diagnosed = False
         for epoch in range(max_epochs):
             model.train()
             for batch in train_loader:
@@ -65,9 +66,28 @@ def train_patchtst(model, train_loader, val_loader, max_epochs: int = MAX_EPOCHS
                     future_values=batch["future_values"].to(device),
                 )
                 outputs.loss.backward()
+
+                if not first_batch_diagnosed:
+                    total_grad_norm = 0.0
+                    num_params_with_grad = 0
+                    num_params_total = 0
+                    for name, p in model.named_parameters():
+                        num_params_total += 1
+                        if p.grad is not None:
+                            num_params_with_grad += 1
+                            total_grad_norm += p.grad.norm().item()
+                        else:
+                            print(f"DIAGNOSTIC — no gradient on: {name}")
+                    print(f"DIAGNOSTIC — loss value: {outputs.loss.item()}")
+                    print(f"DIAGNOSTIC — params with gradient: {num_params_with_grad}/{num_params_total}")
+                    print(f"DIAGNOSTIC — total gradient norm: {total_grad_norm}")
+                    print(f"DIAGNOSTIC — requires_grad on model params: {all(p.requires_grad for p in model.parameters())}")
+                    first_batch_diagnosed = True
+
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 scheduler.step()
+                
 
             val_loss = evaluate_patchtst(model, val_loader, device)
             mlflow.log_metric("val_loss", val_loss, step=epoch)

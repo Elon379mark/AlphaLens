@@ -52,7 +52,7 @@ def prepare_patchtst_data(
     prices = pd.read_parquet(prices_path)
     prices["date"] = pd.to_datetime(prices["date"])
     prices = prices.sort_values(["ticker", "date"])
-    prices["daily_return"] = prices.groupby("ticker")["adj_close"].pct_change()
+    prices["daily_return"] = prices.groupby("ticker")["adj_close"].pct_change() * 100  # scaled by 100 for numerical stability — raw returns (~0.01-0.03 magnitude) produce near-zero gradients with MSE loss; rescale back down at inference
     prices = prices.dropna(subset=["daily_return"])
 
     series_by_ticker = {

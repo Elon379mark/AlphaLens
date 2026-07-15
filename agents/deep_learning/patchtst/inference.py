@@ -25,8 +25,8 @@ def predict_returns(model, dataloader) -> pd.DataFrame:
             preds = outputs.prediction_outputs  # shape: (batch, pred_length, 1)
 
             for i in range(preds.shape[0]):
-                pred_mean = preds[i].float().mean().item()
-                actual_mean = batch["future_values"][i].float().mean().item()
+                pred_mean = preds[i].float().mean().item() / 100.0  # undo the x100 scaling applied during data prep
+                actual_mean = batch["future_values"][i].float().mean().item() / 100.0
                 ticker = batch["ticker"][i]
                 results.append({"ticker": ticker, "predicted_return": pred_mean, "actual_return": actual_mean})
 
