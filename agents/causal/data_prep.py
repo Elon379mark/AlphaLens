@@ -34,7 +34,55 @@ def build_causal_dataset(
 
     return df.dropna()
 
-
+def select_uncorrelated_top_signals(
+    ranked_signals: List[str],
+    features: pd.DataFrame,
+    top_n: int = 10,
+    max_corr: float = 0.95,
+) -> List[str]:
+    """
+    Walk down the ranked signal list, greedily selecting signals that are
+    NOT highly correlated (|corr| > max_corr) with any signal already
+    selected. This prevents near-duplicate columns (e.g. a raw ratio and
+    its z-score transform) from both being selected, which causes a
+    singular correlation matrix in PC algorithm's Fisher-Z test and
+    silently distorts DML results by duplicating the same information
+    as two "different" treatments.
+    """
+    selected: List[str] = []
+    for sig in ranked_signals:
+        if len(selected) >= top_n:
+            break
+        if sig not in features.columns:
+            continue
+        candidate_series = features[sig]
+        is_redundant = False
+        for chosen in selected:
+            corr = candidate_series.corr(features[chosen])
+            if pd.notna(corr) and abs(corr) > max_corr:
+                is_redundant = True
+                print(f"  Skipping '{sig}' — corr={corr:.3f} with already-selected '{chosen}'")
+                break
+        if not is_redundant:
+            selected.append(sig)
+    return selected
+def subsample_non_overlapping(causal_df: pd.DataFrame, horizon: int = 21) -> pd.DataFrame:
+    """
+    causal_df is indexed by (date, ticker). Because fwd_return is a 21-day
+    forward return computed on EVERY day, consecutive rows for the same
+    ticker share ~20/21 of their underlying window — heavy autocorrelation
+    that violates the (approximate) independence DML's confidence intervals
+    assume, producing artificially tight CIs and spurious "significant"
+    results. Keeping only every `horizon`-th observation per ticker removes
+    most of this overlap, giving a more honest (if smaller) dataset for
+    causal estimation. This mirrors the "purged/embargo" logic referenced
+    in the project manual's own backtesting section.
+    """
+    df = causal_df.copy()
+    df["_day_rank"] = df.groupby(level="ticker").cumcount()
+    df = df[df["_day_rank"] % horizon == 0]
+    df = df.drop(columns=["_day_rank"])
+    return df
 if __name__ == "__main__":
     print("Loading features and computing forward returns...")
     features = pd.read_parquet("data/processed/features.parquet")
@@ -50,8 +98,9 @@ if __name__ == "__main__":
     print("Loading top signals from Chapter 3...")
     with open("outputs/ranked_signals.json") as f:
         ranked = json.load(f)
-    top_signals = ranked[:10]  # keep small for causal chapter — DML per signal is expensive
-    print(f"Using top 10 signals: {top_signals}")
+    print("Selecting top 10 signals, skipping near-duplicates (|corr| > 0.95)...")
+    top_signals = select_uncorrelated_top_signals(ranked, features, top_n=10, max_corr=0.95)
+    print(f"Final selected signals: {top_signals}")
 
     print("\nBuilding causal dataset...")
     causal_df = build_causal_dataset(features, fwd_returns, top_signals)
