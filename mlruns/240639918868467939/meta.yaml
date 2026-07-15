@@ -1,0 +1,9 @@
+artifact_location: file:///C:/Users/HP/Desktop/AlphaLens/mlruns/240639918868467939
+creation_time: 1784054736815
+effective_trace_archival_retention: null
+experiment_id: '240639918868467939'
+last_update_time: 1784054736815
+lifecycle_stage: active
+name: alphalens_tft
+trace_location: null
+workspace: default

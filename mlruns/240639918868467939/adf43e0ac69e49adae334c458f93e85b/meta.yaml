@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/HP/Desktop/AlphaLens/mlruns/240639918868467939/adf43e0ac69e49adae334c458f93e85b/artifacts
+end_time: 1784054737050
+entry_point_name: ''
+experiment_id: '240639918868467939'
+lifecycle_stage: active
+run_id: adf43e0ac69e49adae334c458f93e85b
+run_name: TFT_training
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1784054737021
+status: 4
+tags: []
+user_id: HP
