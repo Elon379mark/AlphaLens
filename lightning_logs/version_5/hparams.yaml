@@ -1,0 +1,167 @@
+backcast_loss_ratio: 1.0
+context_length: 30
+dataset_parameters:
+  add_encoder_length: false
+  add_relative_time_idx: false
+  add_target_scales: false
+  allow_missing_timesteps: true
+  categorical_encoders:
+    __group_id__ticker: !!python/object:pytorch_forecasting.data.encoders.NaNLabelEncoder
+      add_nan: false
+      classes_:
+        TICK00: 0
+        TICK01: 1
+        TICK02: 2
+        TICK03: 3
+        TICK04: 4
+        TICK05: 5
+        TICK06: 6
+        TICK07: 7
+        TICK08: 8
+        TICK09: 9
+        TICK10: 10
+        TICK11: 11
+        TICK12: 12
+        TICK13: 13
+        TICK14: 14
+        TICK15: 15
+        TICK16: 16
+        TICK17: 17
+        TICK18: 18
+        TICK19: 19
+      classes_vector_: !!python/object/apply:numpy._core.multiarray._reconstruct
+        args:
+        - !!python/name:numpy.ndarray ''
+        - !!python/tuple
+          - 0
+        - !!binary |
+          Yg==
+        state: !!python/tuple
+        - 1
+        - !!python/tuple
+          - 20
+        - !!python/object/apply:numpy.dtype
+          args:
+          - U6
+          - false
+          - true
+          state: !!python/tuple
+          - 3
+          - <
+          - null
+          - null
+          - null
+          - 24
+          - 4
+          - 8
+        - false
+        - !!binary |
+          VAAAAEkAAABDAAAASwAAADAAAAAwAAAAVAAAAEkAAABDAAAASwAAADAAAAAxAAAAVAAAAEkAAABD
+          AAAASwAAADAAAAAyAAAAVAAAAEkAAABDAAAASwAAADAAAAAzAAAAVAAAAEkAAABDAAAASwAAADAA
+          AAA0AAAAVAAAAEkAAABDAAAASwAAADAAAAA1AAAAVAAAAEkAAABDAAAASwAAADAAAAA2AAAAVAAA
+          AEkAAABDAAAASwAAADAAAAA3AAAAVAAAAEkAAABDAAAASwAAADAAAAA4AAAAVAAAAEkAAABDAAAA
+          SwAAADAAAAA5AAAAVAAAAEkAAABDAAAASwAAADEAAAAwAAAAVAAAAEkAAABDAAAASwAAADEAAAAx
+          AAAAVAAAAEkAAABDAAAASwAAADEAAAAyAAAAVAAAAEkAAABDAAAASwAAADEAAAAzAAAAVAAAAEkA
+          AABDAAAASwAAADEAAAA0AAAAVAAAAEkAAABDAAAASwAAADEAAAA1AAAAVAAAAEkAAABDAAAASwAA
+          ADEAAAA2AAAAVAAAAEkAAABDAAAASwAAADEAAAA3AAAAVAAAAEkAAABDAAAASwAAADEAAAA4AAAA
+          VAAAAEkAAABDAAAASwAAADEAAAA5AAAA
+      warn: true
+  constant_fill_strategy: null
+  group_ids:
+  - ticker
+  lags: null
+  max_encoder_length: 30
+  max_prediction_length: 21
+  min_encoder_length: 30
+  min_prediction_idx: !!python/object/apply:numpy._core.multiarray.scalar
+  - !!python/object/apply:numpy.dtype
+    args:
+    - i8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - !!binary |
+    AAAAAAAAAAA=
+  min_prediction_length: 21
+  predict_mode: false
+  randomize_length: null
+  scalers: {}
+  static_categoricals: null
+  static_reals: null
+  target: daily_return
+  target_normalizer: &id002 !!python/object:pytorch_forecasting.data.encoders.EncoderNormalizer
+    _method_kwargs: {}
+    center: true
+    center_: !!python/object/apply:numpy._core.multiarray.scalar
+    - &id001 !!python/object/apply:numpy.dtype
+      args:
+      - f8
+      - false
+      - true
+      state: !!python/tuple
+      - 3
+      - <
+      - null
+      - null
+      - null
+      - -1
+      - -1
+      - 0
+    - !!binary |
+      cu+Y2zYiNz8=
+    max_length: null
+    method: standard
+    method_kwargs: {}
+    scale_: !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAclIfFglT8=
+    transformation: null
+  time_idx: time_idx
+  time_varying_known_categoricals: null
+  time_varying_known_reals: null
+  time_varying_unknown_categoricals: null
+  time_varying_unknown_reals:
+  - daily_return
+  variable_groups: null
+  weight: null
+dropout: 0.1
+expansion_coefficient_lengths:
+- 3
+- 7
+learning_rate: 0.0005
+log_gradient_flow: false
+log_interval: 10
+log_val_interval: 1
+monotone_constraints: {}
+num_block_layers:
+- 3
+- 3
+num_blocks:
+- 2
+- 2
+optimizer: adam
+optimizer_params: null
+output_transformer: *id002
+prediction_length: 21
+reduce_on_plateau_min_lr: 1.0e-05
+reduce_on_plateau_patience: 1000
+reduce_on_plateau_reduction: 2.0
+sharing:
+- true
+- true
+stack_types:
+- trend
+- seasonality
+weight_decay: 0.01
+widths:
+- 32
+- 128
