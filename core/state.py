@@ -16,6 +16,10 @@ class AlphaLensState(TypedDict, total=False):
     ic_scores: Dict[str, float]        # IC per feature
     icir_scores: Dict[str, float]      # ICIR per feature
     ranked_signals: List[str]          # Signal names ranked by ICIR
+    # === Causal ===
+    dag_structure: Dict
+    ate_estimates: Dict[str, dict]
+    causal_signals: List[str]
 
     # === Metadata ===
     run_id: str
