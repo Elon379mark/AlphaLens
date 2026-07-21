@@ -193,6 +193,70 @@ class LiteratureAgent:
         # Simulated Extract: parses context to generate a realistic hypothesis matching the query
         return self._simulated_llm_call(query, context_texts, sources)
 
+    def deduplicate_hypothesis(
+        self,
+        new_hypothesis: HypothesisSchema,
+        hypothesis_registry: List[HypothesisSchema],
+        threshold: float = 0.85
+    ) -> Tuple[bool, float]:
+        """
+        Step 3: De-duplicates new hypotheses against hypothesis registry using cosine similarity (θ > 0.85).
+        Returns (is_duplicate, max_similarity).
+        """
+        if not hypothesis_registry:
+            return False, 0.0
+
+        new_text = f"{new_hypothesis.predictor_variable} {new_hypothesis.target_asset_class} {new_hypothesis.theoretical_mechanism}"
+        new_emb = np.array(self.rag._get_embedding(new_text), dtype=np.float32) if np is not None else None
+
+        max_sim = 0.0
+        for existing in hypothesis_registry:
+            exist_text = f"{existing.predictor_variable} {existing.target_asset_class} {existing.theoretical_mechanism}"
+            if np is not None:
+                exist_emb = np.array(self.rag._get_embedding(exist_text), dtype=np.float32)
+                sim = float(np.dot(new_emb, exist_emb) / (np.linalg.norm(new_emb) * np.linalg.norm(exist_emb) + 1e-9))
+            else:
+                sim = 0.5 if existing.predictor_variable == new_hypothesis.predictor_variable else 0.1
+            if sim > max_sim:
+                max_sim = sim
+
+        is_dup = max_sim > threshold
+        if is_dup:
+            import logging
+            logging.getLogger(__name__).info(
+                f"[LiteratureAgent] Step 3: Hypothesis '{new_hypothesis.hypothesis_id}' is DUPLICATE "
+                f"(Cosine Similarity={max_sim:.4f} > {threshold})"
+            )
+        return is_dup, float(max_sim)
+
+    def compute_composite_hypothesis_score(
+        self,
+        hypothesis: HypothesisSchema,
+        max_similarity: float,
+        current_regime: str = "bull",
+        w_plausibility: float = 0.4,
+        w_novelty: float = 0.3,
+        w_relevance: float = 0.3,
+    ) -> float:
+        """
+        Step 4: Ranks surviving hypotheses by composite score:
+          - theoretical plausibility (LLM confidence)
+          - empirical novelty (1.0 - max_similarity from existing registry)
+          - market relevance (alignment with current regime)
+        """
+        plausibility = hypothesis.confidence
+        novelty = max(0.0, 1.0 - max_similarity)
+        
+        # Market relevance based on current regime
+        relevance = 1.0 if current_regime.lower() in ("bull", "high_vol", "bear") else 0.5
+
+        composite_score = (
+            w_plausibility * plausibility +
+            w_novelty * novelty +
+            w_relevance * relevance
+        )
+        return float(composite_score)
+
     def _simulated_llm_call(self, query: str, context: List[str], sources: List[str]) -> HypothesisSchema:
         # Match keywords in query/context to produce a tailored, valid mock hypothesis
         query_lower = query.lower()

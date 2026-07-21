@@ -59,6 +59,7 @@ class AlphaLensState(TypedDict):
     # === Causal Validation Agent Output (from both schemas) ===
     p_value: NotRequired[float]                       # Statistical significance (Contract 2 threshold: < 0.05)
     ate_magnitude: NotRequired[float]                 # Average Treatment Effect from DML estimator
+    rosenbaum_robust: NotRequired[bool]               # Sensitivity to unmeasured confounders (Gamma <= 2.0)
     dag_path: NotRequired[str]                        # Path to serialized DAG structure
     sharpe_ratio: NotRequired[float]                  # Sharpe ratio of signal (Contract 2 threshold: >= 1.0)
     causal_validated_at: NotRequired[str]             # ISO timestamp
@@ -102,3 +103,10 @@ class AlphaLensState(TypedDict):
     # === Test & Compatibility fields (from GraphState) ===
     hypothesis: NotRequired[Any]                      # For tracking full hypothesis schemas in tests
     half_life_days: NotRequired[float]                # Mock signal duration in tests
+    agent_logs: NotRequired[List[str]]                # Agent log messages for UI display
+    query: NotRequired[str]                           # User research query
+
+    # === §11.1: Human Review Node ===
+    human_review_approved: NotRequired[bool]          # Human-in-the-loop approval flag
+    human_review_notes: NotRequired[str]              # Optional reviewer comments
+

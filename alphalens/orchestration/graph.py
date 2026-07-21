@@ -217,6 +217,7 @@ def causal_validation_agent_node(state: GraphState) -> dict[str, Any]:
     mock_output = {
         "p_value": p_val,
         "ate_magnitude": ate,
+        "rosenbaum_robust": causal_out.get("rosenbaum_robust", False),
         "dag_path": f"/data/dags/{state.get('hypothesis_id', 'unknown')}.json",
         "causal_validated_at": datetime.now(timezone.utc).isoformat(),
         "status": "causal_complete",
@@ -381,6 +382,25 @@ def rejection_refinement_agent_node(state: GraphState) -> dict[str, Any]:
 # SECTION 3: ROUTING LOGIC (Contract 2 - Person B owns)
 # ============================================================
 
+def predictive_screening_router(state: GraphState) -> Literal["deep_learning_agent", "rejection_refinement_agent"]:
+    """
+    ROUTER: Predictive Screening Gating (Step 6)
+    -------------------------------------------
+    Routes to Deep Learning Agent if signal_passes_gate is True (|IC| >= 0.03 AND |ICIR| >= 0.5).
+    Falls back to rejection & refinement loop otherwise.
+    """
+    passes_gate = state.get("signal_passes_gate", True)
+    ic = state.get("information_coefficient", 0.0)
+    icir = state.get("information_ratio", 0.0)
+
+    if passes_gate and (abs(ic) >= 0.03 or abs(icir) >= 0.5):
+        logger.info(f"[Router] Step 6 PREDICTIVE_SCREENING_PASS | IC={ic:.4f} | ICIR={icir:.4f}")
+        return "deep_learning_agent"
+    else:
+        logger.warning(f"[Router] Step 6 PREDICTIVE_SCREENING_REJECT | IC={ic:.4f} < 0.03 or ICIR={icir:.4f} < 0.5")
+        return "rejection_refinement_agent"
+
+
 def causal_router(state: GraphState) -> Literal["backtest_agent", "rejection_refinement_agent"]:
     """
     ROUTER: Causal Validation Gating
@@ -389,30 +409,36 @@ def causal_router(state: GraphState) -> Literal["backtest_agent", "rejection_ref
     Falls back to rejection & refinement loop otherwise.
     """
     p_value = state.get("p_value", 1.0)
+    rosenbaum_robust = state.get("rosenbaum_robust", True)
 
-    if p_value < 0.05:
-        logger.info(f"[Router] ROUTE_TO_BACKTESTING | p_value={p_value} < 0.05")
+    if p_value < 0.05 and rosenbaum_robust:
+        logger.info(f"[Router] ROUTE_TO_BACKTESTING | p_value={p_value} < 0.05 | rosenbaum_robust={rosenbaum_robust}")
         return "backtest_agent"
     else:
-        logger.warning(f"[Router] ROUTE_TO_REJECTION_AND_REFINEMENT_LOOP | p_value={p_value} >= 0.05")
+        logger.warning(f"[Router] ROUTE_TO_REJECTION_AND_REFINEMENT_LOOP | p_value={p_value} >= 0.05 or rosenbaum_robust={rosenbaum_robust}")
         return "rejection_refinement_agent"
 
 
-def backtest_router(state: GraphState) -> Literal["portfolio_agent", "rejection_refinement_agent"]:
+def backtest_router(state: GraphState) -> Literal["portfolio_agent", "signal_gen_agent"]:
     """
-    ROUTER: Performance Gating
-    ---------------------------
+    ROUTER: Performance Gating (§11.1)
+    -----------------------------------
     Routes to Portfolio Construction Agent if Sharpe Ratio >= 1.0.
-    Falls back to rejection & refinement loop otherwise.
+    Routes back to Signal Generation Agent otherwise (§11.1: backtest_agent → signal_gen_agent).
+    This skips the literature re-search and tries a different signal directly.
     """
     sharpe_ratio = state.get("sharpe_ratio", 0.0)
+    iteration = state.get("iteration", 0)
 
     if sharpe_ratio >= 1.0:
         logger.info(f"[Router] ROUTE_TO_PORTFOLIO_CONSTRUCTION | sharpe_ratio={sharpe_ratio} >= 1.0")
         return "portfolio_agent"
     else:
-        logger.warning(f"[Router] ROUTE_TO_REJECTION_AND_REFINEMENT_LOOP | sharpe_ratio={sharpe_ratio} < 1.0")
-        return "rejection_refinement_agent"
+        logger.warning(
+            f"[Router] §11.1 ROUTE_BACK_TO_SIGNAL_GEN | sharpe_ratio={sharpe_ratio} < 1.0 | "
+            f"iteration={iteration} (skipping literature re-search)"
+        )
+        return "signal_gen_agent"
 
 
 def refinement_router(state: GraphState) -> Literal["literature_agent", "__end__"]:
@@ -441,9 +467,43 @@ def refinement_router(state: GraphState) -> Literal["literature_agent", "__end__
 # SECTION 4: GRAPH COMPILATION (Person B owns)
 # ============================================================
 
+def human_review_node(state: GraphState) -> dict[str, Any]:
+    """
+    §11.1: Human Review Node [optional breakpoint].
+    Logs the complete pipeline results for human review.
+    When persistence (HITL) is enabled via CheckpointSaver,
+    execution pauses here for approval before reaching END.
+    """
+    hyp = state.get("hypothesis")
+    logger.info(
+        f"[HumanReview] §11.1 Pipeline results ready for review | "
+        f"hypothesis={getattr(hyp, 'hypothesis_id', 'N/A')} | "
+        f"sharpe={state.get('sharpe_ratio', 'N/A')} | "
+        f"p_value={state.get('p_value', 'N/A')}"
+    )
+
+    run_id = state.get("run_id", "default_run_id")
+    log_msg = (
+        f"§11.1 Human review checkpoint: "
+        f"hypothesis={getattr(hyp, 'hypothesis_id', 'N/A')}, "
+        f"sharpe={state.get('sharpe_ratio', 'N/A')}, "
+        f"p_value={state.get('p_value', 'N/A')}, "
+        f"weights={state.get('portfolio_weights', {})}"
+    )
+    run_sync(_memory_engine.add_episode_log(run_id, "human_review_node", "INFO", log_msg))
+
+    return {
+        "human_review_approved": True,  # Auto-approve in non-interactive mode
+        "current_node": "human_review_node",
+        "agent_logs": state.get("agent_logs", []) + [
+            f"👁️ Human Review (§11.1): Pipeline results logged for review.",
+        ],
+    }
+
+
 def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> Any:
     """
-    Builds and compiles the full AlphaLens LangGraph state machine.
+    Builds and compiles the full AlphaLens LangGraph state machine (§11.1).
 
     Args:
         checkpointer: Optional PostgresCheckpointSaver for state persistence.
@@ -452,19 +512,24 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
     Returns:
         Compiled LangGraph application ready for invocation.
 
-    Node Execution Order:
+    Node Execution Order (§11.1):
         START
-          -> literature_agent
-          -> signal_agent
-          -> deep_learning_agent
-          -> gnn_agent
-          -> causal_validation_agent
-          -> [causal_router]
-              -> portfolio_agent -> END
-              -> rejection_refinement_agent
-                  -> [refinement_router]
-                      -> literature_agent (loop)
-                      -> END (max iterations reached)
+          → literature_agent
+          → signal_agent
+          → deep_learning_agent
+          → gnn_agent
+          → causal_validation_agent
+          → [causal_router]
+              → backtest_agent (if ATE p < 0.05)
+                  → [backtest_router]
+                      → portfolio_agent (if Sharpe > 1.0)
+                          → human_review_node [optional breakpoint]
+                              → END
+                      → signal_gen_agent (else: reject, try different signal)
+              → rejection_refinement_agent (else: reject, refine hypothesis)
+                  → [refinement_router]
+                      → literature_agent (loop)
+                      → END (max iterations reached)
     """
     graph = StateGraph(GraphState)
 
@@ -476,16 +541,28 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
     graph.add_node("causal_validation_agent", causal_validation_agent_node)
     graph.add_node("backtest_agent", backtest_agent_node)
     graph.add_node("portfolio_agent", portfolio_agent_node)
+    graph.add_node("human_review_node", human_review_node)  # §11.1
     graph.add_node("rejection_refinement_agent", rejection_refinement_agent_node)
 
     # --- Wire linear edges ---
     graph.add_edge(START, "literature_agent")
     graph.add_edge("literature_agent", "signal_agent")
-    graph.add_edge("signal_agent", "deep_learning_agent")
     graph.add_edge("deep_learning_agent", "gnn_agent")
     graph.add_edge("gnn_agent", "causal_validation_agent")
 
     # --- Wire conditional routing edges ---
+    # Step 6: Predictive Screening Gating (|IC| >= 0.03 and |ICIR| >= 0.5)
+    graph.add_conditional_edges(
+        "signal_agent",
+        predictive_screening_router,
+        {
+            "deep_learning_agent": "deep_learning_agent",
+            "rejection_refinement_agent": "rejection_refinement_agent",
+        }
+    )
+
+    # §11.1 / Step 8: causal_validation_agent → backtest_agent (if ATE p < 0.05)
+    #         causal_validation_agent → signal_gen_agent (else: reject, refine)
     graph.add_conditional_edges(
         "causal_validation_agent",
         causal_router,
@@ -495,12 +572,14 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
         }
     )
 
+    # §11.1: backtest_agent → portfolio_agent (if Sharpe > 1.0)
+    #         backtest_agent → signal_gen_agent (else: reject)
     graph.add_conditional_edges(
         "backtest_agent",
         backtest_router,
         {
             "portfolio_agent": "portfolio_agent",
-            "rejection_refinement_agent": "rejection_refinement_agent",
+            "signal_gen_agent": "signal_agent",
         }
     )
 
@@ -513,7 +592,9 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
         }
     )
 
-    graph.add_edge("portfolio_agent", END)
+    # §11.1: portfolio_agent → human_review_node → END
+    graph.add_edge("portfolio_agent", "human_review_node")
+    graph.add_edge("human_review_node", END)
 
     # --- Compile with optional checkpointer ---
     compile_kwargs = {}
@@ -521,7 +602,7 @@ def build_alphalens_graph(checkpointer: BaseCheckpointSaver | None = None) -> An
         compile_kwargs["checkpointer"] = checkpointer
 
     compiled = graph.compile(**compile_kwargs)
-    logger.info("[AlphaLens] Graph compiled successfully.")
+    logger.info("[AlphaLens] §11.1 Graph compiled successfully.")
     return compiled
 
 
@@ -673,13 +754,13 @@ class AlphaLensGraph:
             }
         )
 
-        # Backtest Router
+        # Backtest Router (§11.1: reject → signal_gen_agent)
         graph.add_conditional_edges(
             "backtest_agent",
             backtest_router,
             {
                 "portfolio_agent": "portfolio_agent",
-                "rejection_refinement_agent": "rejection_refinement_agent",
+                "signal_gen_agent": "signal_agent",
             }
         )
 

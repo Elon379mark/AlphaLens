@@ -457,8 +457,9 @@ div[data-testid="stChatInput"] {
 .metric-change.up { color: var(--accent-emerald); }
 .metric-change.down { color: #f43f5e; }
 
-/* Hide streamlit chrome */
-#MainMenu, header, footer { visibility: hidden; }
+/* Hide unnecessary streamlit elements but keep sidebar toggle button */
+#MainMenu, footer { visibility: hidden; }
+header[data-testid="stHeader"] { background: transparent !important; }
 .stDeployButton { display: none; }
 </style>
 
@@ -598,6 +599,64 @@ with st.sidebar:
         st.session_state.charts = {}
         st.rerun()
 
+    st.markdown('<div class="sidebar-label">Pipeline & Execution Mode</div>', unsafe_allow_html=True)
+    
+    exec_mode = st.radio(
+        "Chat / Pipeline Mode",
+        options=["💬 Chat & Explainer", "🚀 Quant Pipeline Execution"],
+        index=0,
+        help="Select whether prompts run as interactive chat or trigger the full 7-agent quantitative pipeline."
+    )
+    st.session_state.exec_mode = exec_mode
+
+    st.markdown('<div class="sidebar-label">📁 Choose File (CSV, Excel, PDF, Parquet)</div>', unsafe_allow_html=True)
+
+    # Single Unified File Uploader for ALL file types
+    uploaded_file = st.file_uploader(
+        "Choose file",
+        type=["csv", "xlsx", "xls", "pdf", "parquet", "txt", "json"],
+        help="Upload price/market data (CSV/Excel/Parquet) or research documents (PDF/TXT)"
+    )
+
+    if uploaded_file is not None:
+        fname = uploaded_file.name.lower()
+        try:
+            if fname.endswith(".pdf") or fname.endswith(".txt"):
+                # Save paper/literature document for RAG Literature Agent
+                os.makedirs("data/raw/pdfs", exist_ok=True)
+                target_path = os.path.join("data/raw/pdfs", uploaded_file.name)
+                with open(target_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                st.success(f"📄 Paper saved to literature collection: {uploaded_file.name}")
+
+            elif fname.endswith(".csv") or fname.endswith(".xlsx") or fname.endswith(".xls") or fname.endswith(".parquet"):
+                # Parse structured dataset for Signal & Backtest Engine
+                os.makedirs("data/processed", exist_ok=True)
+                if fname.endswith(".csv"):
+                    df_up = pd.read_csv(uploaded_file)
+                elif fname.endswith(".parquet"):
+                    df_up = pd.read_parquet(uploaded_file)
+                else:
+                    df_up = pd.read_excel(uploaded_file)
+
+                # Standardize columns
+                df_up.columns = [str(c).lower().strip() for c in df_up.columns]
+                if "date" in df_up.columns:
+                    df_up["date"] = pd.to_datetime(df_up["date"])
+                if "ticker" not in df_up.columns:
+                    df_up["ticker"] = "CUSTOM"
+                
+                df_up = df_up.set_index(["ticker", "date"])
+                df_up.to_parquet("data/processed/ohlcv.parquet")
+                st.success(f"📊 Market dataset loaded ({len(df_up)} rows) -> ohlcv.parquet")
+
+            else:
+                st.info(f"File uploaded: {uploaded_file.name}")
+
+        except Exception as e:
+            st.error(f"Failed to process {uploaded_file.name}: {e}")
+
+    st.markdown("---")
     st.markdown('<div class="sidebar-label">Research Modules</div>', unsafe_allow_html=True)
 
     modules = [
@@ -635,16 +694,6 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
-    st.markdown(
-        '<div style="text-align:center;padding:8px 0;">'
-        '<div style="font-family:JetBrains Mono;font-size:0.6rem;color:var(--text-muted);">'
-        'GROQ · LLaMA 3.3 70B · TFT · N-BEATS · PatchTST · GAT</div></div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("---")
-    st.markdown('<div class="sidebar-label">Pipeline Control</div>', unsafe_allow_html=True)
-
     if st.button("🚀 Run Full Pipeline", use_container_width=True, type="primary", key="run_pipeline_btn"):
         st.session_state.run_pipeline = True
         st.rerun()
@@ -680,7 +729,8 @@ if st.session_state.get("run_pipeline", False):
         from alphalens.orchestration.graph import run_pipeline as _run_pipeline
 
         progress_bar.progress(10, text="📚 Literature Agent — generating hypothesis...")
-        result = _run_pipeline(predictor_variable="momentum_12_1", target_asset_class="US_EQUITY")
+        pred_var = st.session_state.pop("pending_predictor", "momentum_12_1")
+        result = _run_pipeline(predictor_variable=pred_var, target_asset_class="US_EQUITY")
         progress_bar.progress(100, text="✅ Pipeline complete!")
 
         # Display results
@@ -917,6 +967,11 @@ pending = st.session_state.pop("pending_query", None)
 user_input = st.chat_input("Research query — e.g. 'analyze NVDA momentum' or 'explain CVaR'") or pending
 
 if user_input:
+    if st.session_state.get("exec_mode") == "🚀 Quant Pipeline Execution":
+        st.session_state.pending_predictor = user_input
+        st.session_state.run_pipeline = True
+        st.rerun()
+
     llm = get_llm()
     if not llm:
         st.error("⚠️ GROQ_API_KEY not configured. Please set GROQ_API_KEY in your .env file.")

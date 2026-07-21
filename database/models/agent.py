@@ -1,12 +1,14 @@
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
-from sqlalchemy import String, Text, JSON, DateTime, Index, func
+from sqlalchemy import String, Text, JSON, DateTime, LargeBinary, Index, func
 from sqlalchemy.orm import Mapped, mapped_column
 from database.base import Base
 
 class AgentLog(Base):
     """
     Agent execution logs for system auditing.
+    Stores both human-readable messages and Protobuf-serialized binary payloads
+    per Section 5.1 of the AlphaLens specification (Protocol Buffer event log).
     """
     __tablename__ = "agent_logs"
 
@@ -15,6 +17,8 @@ class AgentLog(Base):
     agent_name: Mapped[str] = mapped_column(String(50), nullable=False)
     log_level: Mapped[str] = mapped_column(String(10), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
+    # §5.1: Raw Protobuf-serialized AgentMessage binary for replay capability
+    payload_binary: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), server_default=func.now())
 
     __table_args__ = (

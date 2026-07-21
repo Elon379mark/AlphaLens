@@ -266,12 +266,34 @@ def literature_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         lit_agent = LiteratureAgent(rag)
         hypothesis = lit_agent.generate_hypothesis(query)
 
+    # Step 3 & Step 4: De-duplication (θ > 0.85) and Composite Score Ranking
+    rag = RAGPipeline()
+    lit_agent = LiteratureAgent(rag)
+    reg_hypotheses = []
+    try:
+        past_fact = run_sync(_memory_engine.get_semantic_fact("literature_agent", "hypothesis_registry"))
+        if past_fact and "registry" in past_fact:
+            reg_hypotheses = [HypothesisSchema(**h) for h in past_fact["registry"]]
+    except Exception:
+        pass
+
+    is_dup, max_sim = lit_agent.deduplicate_hypothesis(hypothesis, reg_hypotheses, threshold=0.85)
+    composite_score = lit_agent.compute_composite_hypothesis_score(hypothesis, max_sim, current_regime=state.get("current_regime", "bull"))
+    logger.info(f"[Literature Agent] Step 3/4: Hypothesis '{hypothesis.hypothesis_id}' | MaxSim={max_sim:.4f} | CompositeScore={composite_score:.4f}")
+
+    # Register in memory
+    try:
+        reg_data = [h.dict() if hasattr(h, 'dict') else dict(h) for h in reg_hypotheses + [hypothesis]]
+        run_sync(_memory_engine.store_semantic_fact("literature_agent", "hypothesis_registry", {"registry": reg_data}))
+    except Exception:
+        pass
+
     logger.info(f"[Literature Agent] Generated: {hypothesis.hypothesis_id} — {hypothesis.predictor_variable}")
 
     log_message = (
         f"Generated hypothesis {hypothesis.hypothesis_id}: "
         f"'{hypothesis.predictor_variable}' -> '{hypothesis.target_asset_class}' "
-        f"(direction={hypothesis.predicted_direction.value}, confidence={hypothesis.confidence:.2f})"
+        f"(direction={hypothesis.predicted_direction.value}, confidence={hypothesis.confidence:.2f}, composite_score={composite_score:.4f})"
     )
     run_sync(_memory_engine.add_episode_log(run_id, "literature_agent", "INFO", log_message))
 
@@ -450,24 +472,48 @@ def signal_gen_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"[Signal Gen Agent] Failed to cache active matrix in Redis: {e}")
 
-    # 7. Ask LLM to evaluate the signal quality
+    # 7. §11.3: Structured chain-of-thought prompt for signal evaluation
     llm = _get_llm()
-    eval_prompt = (
-        f"You are the Signal Generation Agent evaluating a quantitative trading signal.\n\n"
-        f"Selected Signal: {feature_name}\n"
-        f"Computed Metrics:\n"
-        f"- Information Coefficient (IC): {ic:.4f}\n"
-        f"- Information Ratio (ICIR): {icir:.4f}\n"
-        f"- Signal Half-Life: {half_life:.1f} days\n\n"
-        f"Classical ML Analysis:\n"
-        f"- Top LASSO Feature: {top_lasso if 'top_lasso' in locals() else 'N/A'}\n"
-        f"- Top Random Forest MDA Feature: {top_mda if 'top_mda' in locals() else 'N/A'}\n\n"
-        f"Gating thresholds: |IC| >= 0.03 AND |ICIR| >= 0.5\n\n"
-        f"Analyze these metrics. Does the selected signal pass the gating thresholds? "
-        f"Comment on how the classical ML feature selections (LASSO/RF) compare with the selected signal. "
+    hyp_json = (
+        f'{{"hypothesis_id": "{hyp.hypothesis_id}", "predictor": "{hyp.predictor_variable}", '
+        f'"direction": "{hyp.predicted_direction.value}", "confidence": {hyp.confidence:.2f}}}'
+    ) if hyp else '{}'
+
+    # Retrieve episodic memory for historical decisions
+    past_episodes = []
+    try:
+        past_episodes = run_sync(_memory_engine.get_episodes_by_agent("signal_gen_agent"))
+    except Exception:
+        pass
+    episodic_context = "; ".join(e.message[:80] for e in past_episodes[-3:]) if past_episodes else "No prior episodes."
+
+    system_msg = SystemMessage(content=(
+        "You are the signal_gen_agent in the AlphaLens platform. "
+        "Your role is to evaluate quantitative trading signals using statistical metrics (IC, ICIR, half-life) "
+        "and classical ML feature importance (LASSO, Random Forest MDA). "
+        "Always reason step-by-step before producing output. "
+        "Output must conform to JSON schema: {\"signal_quality\": str, \"passes_gate\": bool, \"reasoning\": str}."
+    ))
+    human_msg = HumanMessage(content=(
+        f"CONTEXT:\n"
+        f"  - Current hypothesis: {hyp_json}\n"
+        f"  - Selected signal: {feature_name}\n"
+        f"  - Historical decisions: {episodic_context}\n\n"
+        f"TASK:\n"
+        f"  Evaluate the signal quality given these computed metrics:\n"
+        f"  - Information Coefficient (IC): {ic:.4f}\n"
+        f"  - Information Ratio (ICIR): {icir:.4f}\n"
+        f"  - Signal Half-Life: {half_life:.1f} days\n"
+        f"  - Top LASSO Feature: {top_lasso if 'top_lasso' in locals() else 'N/A'}\n"
+        f"  - Top Random Forest MDA Feature: {top_mda if 'top_mda' in locals() else 'N/A'}\n"
+        f"  Gating thresholds: |IC| >= 0.03 AND |ICIR| >= 0.5\n\n"
+        f"CONSTRAINTS:\n"
+        f"  - Do not introduce look-ahead bias.\n"
+        f"  - Cite evidence for all statistical claims.\n"
+        f"  - Flag low-confidence outputs with uncertainty_flag=true.\n\n"
         f"Respond in 2-3 sentences."
-    )
-    eval_response = llm.invoke([HumanMessage(content=eval_prompt)])
+    ))
+    eval_response = llm.invoke([system_msg, human_msg])
     llm_analysis = eval_response.content.strip()
 
     passes_gate = SignalStatistics.evaluate_gating(ic, icir)
@@ -563,9 +609,9 @@ def causal_validation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # 3. Rosenbaum sensitivity bounds (§5.4)
     sensitivity = RosenbaumSensitivity()
     _, p_upper = sensitivity.calculate_bounds(treatment.tolist(), returns.tolist(), gamma=1.5)
-    # Stress test at Γ=2.0 for additional robustness
+    # Stress test at Γ=2.0 for additional robustness (Section 8.4 spec)
     _, p_upper_stress = sensitivity.calculate_bounds(treatment.tolist(), returns.tolist(), gamma=2.0)
-    rosenbaum_robust = bool(p_upper < 0.05)
+    rosenbaum_robust = bool(p_upper_stress < 0.05)
 
     # 4. §5.4: Partial R² analysis for omitted variable bias
     partial_r2_analyzer = PartialR2Analysis()
@@ -577,25 +623,51 @@ def causal_validation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     r2_assessment = partial_r2_analyzer.robustness_assessment(partial_r2)
     logger.info(f"[Causal Validation] §5.4 Partial R²={partial_r2:.4f} — {r2_assessment}")
 
-    # 5. LLM interprets full causal results
+    # 5. §11.3: Structured chain-of-thought prompt for causal interpretation
     llm = _get_llm()
-    causal_prompt = (
-        f"You are the Causal Validation Agent analyzing whether a trading signal has a TRUE causal effect.\n\n"
-        f"Results (§5.4 Full Causal Validation Suite):\n"
-        f"- PC-Algorithm found direct causal link (Signal → Returns): {causal_link}\n"
-        f"- FCI detected latent confounders: {latent_confounder_detected}\n"
-        f"- Signal↔Returns bidirected (hidden common cause): {signal_returns_bidirected}\n"
-        f"- DML Average Treatment Effect (ATE): {ate:.4f}\n"
-        f"- DML p-value: {p_val:.4f}\n"
-        f"- Rosenbaum Γ=1.5 upper bound p-value: {p_upper:.4f}\n"
-        f"- Rosenbaum Γ=2.0 stress test p-value: {p_upper_stress:.4f}\n"
-        f"- Partial R² of treatment: {partial_r2:.4f} (R²_full={r2_full:.4f}, R²_restricted={r2_restricted:.4f})\n\n"
-        f"The gating threshold requires p-value < 0.05.\n\n"
-        f"Interpret these results. Is the causal relationship robust to hidden confounders? "
-        f"Does the Partial R² suggest the treatment adds genuine explanatory power? "
-        f"Should we proceed to backtesting or reject this signal? Respond in 3-4 sentences."
-    )
-    causal_response = llm.invoke([HumanMessage(content=causal_prompt)])
+    hyp = state.get("hypothesis")
+    hyp_json = (
+        f'{{"hypothesis_id": "{hyp.hypothesis_id}", "predictor": "{hyp.predictor_variable}", '
+        f'"direction": "{hyp.predicted_direction.value}"}}'
+    ) if hyp else '{}'
+
+    past_episodes = []
+    try:
+        past_episodes = run_sync(_memory_engine.get_episodes_by_agent("causal_validation_agent"))
+    except Exception:
+        pass
+    episodic_context = "; ".join(e.message[:80] for e in past_episodes[-3:]) if past_episodes else "No prior episodes."
+
+    system_msg = SystemMessage(content=(
+        "You are the causal_validation_agent in the AlphaLens platform. "
+        "Your role is to determine whether a trading signal has a TRUE causal effect on asset returns, "
+        "using PC-Algorithm DAGs, FCI PAGs (latent confounders), Double Machine Learning (DML), "
+        "Rosenbaum sensitivity bounds, and Partial R² analysis. "
+        "Always reason step-by-step before producing output. "
+        "Output must conform to JSON schema: {\"causal_verdict\": str, \"proceed_to_backtest\": bool, \"reasoning\": str}."
+    ))
+    human_msg = HumanMessage(content=(
+        f"CONTEXT:\n"
+        f"  - Current hypothesis: {hyp_json}\n"
+        f"  - Historical decisions: {episodic_context}\n\n"
+        f"TASK:\n"
+        f"  Interpret the full causal validation results (§5.4):\n"
+        f"  - PC-Algorithm direct causal link (Signal → Returns): {causal_link}\n"
+        f"  - FCI detected latent confounders: {latent_confounder_detected}\n"
+        f"  - Signal↔Returns bidirected (hidden common cause): {signal_returns_bidirected}\n"
+        f"  - DML Average Treatment Effect (ATE): {ate:.4f}\n"
+        f"  - DML p-value: {p_val:.4f}\n"
+        f"  - Rosenbaum Γ=1.5 upper bound p-value: {p_upper:.4f}\n"
+        f"  - Rosenbaum Γ=2.0 stress test p-value: {p_upper_stress:.4f}\n"
+        f"  - Partial R² of treatment: {partial_r2:.4f} (R²_full={r2_full:.4f}, R²_restricted={r2_restricted:.4f})\n"
+        f"  Gating threshold: p-value < 0.05.\n\n"
+        f"CONSTRAINTS:\n"
+        f"  - Do not introduce look-ahead bias.\n"
+        f"  - Cite evidence for all statistical claims.\n"
+        f"  - Flag low-confidence outputs with uncertainty_flag=true.\n\n"
+        f"Respond in 3-4 sentences."
+    ))
+    causal_response = llm.invoke([system_msg, human_msg])
     llm_analysis = causal_response.content.strip()
 
     logger.info(f"[Causal Validation] ATE={ate:.4f}, p={p_val:.4f}, causal_link={causal_link}")
@@ -703,21 +775,45 @@ def backtest_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     max_dd = res["max_drawdown"]
     total_ret = res["total_return"]
 
-    # LLM evaluation
+    # §11.3: Structured chain-of-thought prompt for backtest evaluation
     llm = _get_llm()
-    bt_prompt = (
-        f"You are the Backtesting Agent evaluating a quantitative trading strategy's out-of-sample performance.\n\n"
-        f"Results (§5.5 — after transaction costs including Kyle's λ market impact model: "
-        f"TC(q) = σ√(|q|/V_ADV)·sgn(q)·P):\n"
-        f"- Sharpe Ratio: {sharpe:.2f}\n"
-        f"- Maximum Drawdown: {max_dd * 100:.2f}%\n"
-        f"- Total Return: {total_ret * 100:.2f}%\n"
-        f"- Survivorship bias corrected: {survivorship_corrected}\n\n"
-        f"Gating threshold: Sharpe Ratio >= 1.0\n\n"
-        f"Evaluate this strategy. Is the risk-adjusted return acceptable? "
-        f"Comment on the drawdown severity. Respond in 2-3 sentences."
-    )
-    bt_response = llm.invoke([HumanMessage(content=bt_prompt)])
+    hyp = state.get("hypothesis")
+    hyp_json = (
+        f'{{"hypothesis_id": "{hyp.hypothesis_id}", "predictor": "{hyp.predictor_variable}"}}'
+    ) if hyp else '{}'
+
+    past_episodes = []
+    try:
+        past_episodes = run_sync(_memory_engine.get_episodes_by_agent("backtest_agent"))
+    except Exception:
+        pass
+    episodic_context = "; ".join(e.message[:80] for e in past_episodes[-3:]) if past_episodes else "No prior episodes."
+
+    system_msg = SystemMessage(content=(
+        "You are the backtest_agent in the AlphaLens platform. "
+        "Your role is to evaluate out-of-sample backtested strategy performance after transaction costs "
+        "(Kyle's λ market impact model: TC(q) = σ√(|q|/V_ADV)·sgn(q)·P). "
+        "Always reason step-by-step before producing output. "
+        "Output must conform to JSON schema: {\"performance_verdict\": str, \"passes_gate\": bool, \"reasoning\": str}."
+    ))
+    human_msg = HumanMessage(content=(
+        f"CONTEXT:\n"
+        f"  - Current hypothesis: {hyp_json}\n"
+        f"  - Historical decisions: {episodic_context}\n\n"
+        f"TASK:\n"
+        f"  Evaluate the backtested strategy performance (§5.5):\n"
+        f"  - Sharpe Ratio: {sharpe:.2f}\n"
+        f"  - Maximum Drawdown: {max_dd * 100:.2f}%\n"
+        f"  - Total Return: {total_ret * 100:.2f}%\n"
+        f"  - Survivorship bias corrected: {survivorship_corrected}\n"
+        f"  Gating threshold: Sharpe Ratio >= 1.0.\n\n"
+        f"CONSTRAINTS:\n"
+        f"  - Do not introduce look-ahead bias.\n"
+        f"  - Cite evidence for all statistical claims.\n"
+        f"  - Flag low-confidence outputs with uncertainty_flag=true.\n\n"
+        f"Respond in 2-3 sentences."
+    ))
+    bt_response = llm.invoke([system_msg, human_msg])
     llm_analysis = bt_response.content.strip()
 
     logger.info(f"[Backtest Agent] Sharpe={sharpe:.2f}, MDD={max_dd:.4f}")
@@ -785,33 +881,82 @@ def portfolio_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         expected_returns, hist_returns, min_required_return=0.08 / 252.0
     )
 
-    # Black-Litterman blending
+    # Black-Litterman blending (§10.3)
     cov = np.cov(hist_returns, rowvar=False)
     P = np.zeros((2, n_assets))
     P[0, 0] = 1.0
     P[1, 3] = 1.0
     q = np.array([0.10, 0.18])
-    omega_diag = np.array([0.02, 0.01])
+
+    # §10.3: Ω = diag(σ₁², ..., σ_K²) — derive from model prediction intervals
+    # Use ensemble variance from deep learning models if available,
+    # otherwise fall back to sensible defaults
+    ensemble_preds = state.get("ensemble_predictions")
+    if ensemble_preds is not None and hasattr(ensemble_preds, 'std'):
+        # Use per-view prediction standard deviations as Ω diagonal
+        pred_std = ensemble_preds.std()
+        # Map the first two assets' prediction variance to Ω
+        omega_diag = np.array([
+            max(float(pred_std.iloc[0]) ** 2, 0.001) if len(pred_std) > 0 else 0.02,
+            max(float(pred_std.iloc[1]) ** 2, 0.001) if len(pred_std) > 1 else 0.01,
+        ])
+        logger.info(f"[Portfolio Agent] §10.3 Ω derived from model prediction intervals: {omega_diag}")
+    else:
+        omega_diag = np.array([0.02, 0.01])
+        logger.info("[Portfolio Agent] §10.3 Ω using default view uncertainties (no ensemble predictions available).")
 
     bl = BlackLitterman()
     bl_returns = bl.blend_views(expected_returns, cov, P, q, omega_diag)
     weights_bl, cvar_bl = optimizer.optimize_portfolio(bl_returns, hist_returns, min_required_return=0.08 / 252.0)
 
-    # LLM final recommendation
+    # Step 10: Risk Attribution (Brinson-Hood-Beebower model)
+    from alphalens.portfolio_construction.attribution import BrinsonAttribution
+    bhb = BrinsonAttribution()
+    p_weights_dict = dict(zip(asset_names, weights_bl))
+    b_weights_dict = dict(zip(asset_names, [0.25, 0.25, 0.25, 0.25]))
+    p_returns_dict = dict(zip(asset_names, bl_returns))
+    b_returns_dict = dict(zip(asset_names, expected_returns))
+    risk_attr = bhb.compute_attribution(p_weights_dict, b_weights_dict, p_returns_dict, b_returns_dict)
+
+    # §11.3: Structured chain-of-thought prompt for portfolio recommendation
     llm = _get_llm()
     hyp = state.get("hypothesis")
-    portfolio_prompt = (
-        f"You are the Portfolio Construction Agent making the final investment recommendation.\n\n"
-        f"Hypothesis: {hyp.predictor_variable if hyp else 'N/A'} → {hyp.target_asset_class if hyp else 'N/A'}\n"
-        f"Pipeline Results:\n"
-        f"- Causal p-value: {state.get('p_value', 'N/A')}\n"
-        f"- Backtested Sharpe: {state.get('sharpe_ratio', 'N/A')}\n"
-        f"- Optimal Weights: {dict(zip(asset_names, [f'{w:.2%}' for w in weights_bl]))}\n"
-        f"- Daily CVaR (99%): {cvar_bl:.4f}\n\n"
-        f"Provide a 3-sentence executive summary: What signal was discovered, "
-        f"why it's causal (not just correlated), and how capital should be allocated."
-    )
-    portfolio_response = llm.invoke([HumanMessage(content=portfolio_prompt)])
+    hyp_json = (
+        f'{{"hypothesis_id": "{hyp.hypothesis_id}", "predictor": "{hyp.predictor_variable}", '
+        f'"target": "{hyp.target_asset_class}"}}'
+    ) if hyp else '{}'
+
+    past_episodes = []
+    try:
+        past_episodes = run_sync(_memory_engine.get_episodes_by_agent("portfolio_agent"))
+    except Exception:
+        pass
+    episodic_context = "; ".join(e.message[:80] for e in past_episodes[-3:]) if past_episodes else "No prior episodes."
+
+    system_msg = SystemMessage(content=(
+        "You are the portfolio_agent in the AlphaLens platform. "
+        "Your role is to construct risk-adjusted portfolios using mean-CVaR optimisation (§10.1) "
+        "and Black-Litterman view blending (§10.3), and produce a final investment recommendation. "
+        "Always reason step-by-step before producing output. "
+        "Output must conform to JSON schema: {\"executive_summary\": str, \"recommendation\": str}."
+    ))
+    human_msg = HumanMessage(content=(
+        f"CONTEXT:\n"
+        f"  - Current hypothesis: {hyp_json}\n"
+        f"  - Historical decisions: {episodic_context}\n\n"
+        f"TASK:\n"
+        f"  Provide a 3-sentence executive summary:\n"
+        f"  - Pipeline results: Causal p-value={state.get('p_value', 'N/A')}, Backtested Sharpe={state.get('sharpe_ratio', 'N/A')}\n"
+        f"  - Optimal Weights (BL-adjusted): {dict(zip(asset_names, [f'{w:.2%}' for w in weights_bl]))}\n"
+        f"  - Daily CVaR (99%): {cvar_bl:.4f}\n"
+        f"  What signal was discovered, why it's causal (not just correlated), and how capital should be allocated.\n\n"
+        f"CONSTRAINTS:\n"
+        f"  - Do not introduce look-ahead bias.\n"
+        f"  - Cite evidence for all statistical claims.\n"
+        f"  - Flag low-confidence outputs with uncertainty_flag=true.\n\n"
+        f"Respond in 3 sentences."
+    ))
+    portfolio_response = llm.invoke([system_msg, human_msg])
     executive_summary = portfolio_response.content.strip()
 
     logger.info(f"[Portfolio Agent] Weights: {weights_bl}, CVaR: {cvar_bl:.4f}")

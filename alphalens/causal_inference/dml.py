@@ -67,16 +67,25 @@ class DoubleMachineLearningATE:
             l_model.fit(X_train, Y_train)
             l_hat[val_idx] = l_model.predict(X_val)
 
-        # Compute DML residuals and individual influence terms
-        # influence_i = (T_i - m_hat_i) * (Y_i - l_hat_i) / (m_hat_i * (1 - m_hat_i))
+        # Compute DML residuals and individual influence terms (Step 8)
         influence = (T - m_hat) * (Y - l_hat) / (m_hat * (1.0 - m_hat))
         
         ate = float(np.mean(influence))
         
-        # Compute standard error of the mean influence
+        # Step 8: HC3 heteroskedasticity-robust standard error calculation
+        # e_i = influence_i - ate
         residuals = influence - ate
-        variance = np.mean(residuals ** 2)
-        se = math.sqrt(variance / n)
+        # Leverage values h_ii for influence series
+        if n > 1:
+            v_centered = influence - np.mean(influence)
+            v_ss = np.sum(v_centered ** 2)
+            h_ii = (1.0 / n) + (v_centered ** 2 / (v_ss + 1e-9))
+            h_ii = np.clip(h_ii, 0.0, 0.99)  # Protect against division by zero
+            hc3_residuals = residuals / (1.0 - h_ii)
+            variance_hc3 = np.mean(hc3_residuals ** 2) / n
+            se = math.sqrt(max(variance_hc3, 1e-12))
+        else:
+            se = float(np.std(residuals)) / math.sqrt(n) if n > 0 else 0.0
         
         if se == 0:
             return ate, 1.0

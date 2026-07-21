@@ -27,6 +27,13 @@ class DatabaseSessionManager:
         # Init Engines & Session Factories
         self._init_engines()
 
+        # Auto-create tables for SQLite to ensure robust schema presence
+        if self.is_sqlite:
+            try:
+                self.create_tables()
+            except Exception as e:
+                logger.warning(f"DatabaseSessionManager: Auto table creation failed: {e}")
+
     def _init_dsn_paths(self):
         if self.dsn:
             # Check if using postgres

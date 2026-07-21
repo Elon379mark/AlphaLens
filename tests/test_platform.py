@@ -24,11 +24,24 @@ class TestAlphaLensPlatform(unittest.TestCase):
         self.db_manager = DatabaseSessionManager(sqlite_path=self.db_path)
         self.db_manager.create_tables()
         
+        # Patch the global db_manager to use test DB
+        import database.session
+        self.orig_db_manager = database.session.db_manager
+        database.session.db_manager = self.db_manager
+        
+        if 'alphalens.agents.memory' in sys.modules:
+            sys.modules['alphalens.agents.memory'].db_manager = self.db_manager
+
         self.cache = CacheManager()
         self.bus = KafkaMessageBus()
 
     def tearDown(self):
         asyncio.run(self.db_manager.close_all())
+
+        import database.session
+        database.session.db_manager = self.orig_db_manager
+        if 'alphalens.agents.memory' in sys.modules:
+            sys.modules['alphalens.agents.memory'].db_manager = self.orig_db_manager
 
         try:
             os.close(self.db_fd)
