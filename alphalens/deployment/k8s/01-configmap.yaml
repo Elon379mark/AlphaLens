@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alphalens-config
+  namespace: alphalens
+data:
+  DATABASE_URL: "postgresql://postgres:postgres@timescaledb.alphalens.svc.cluster.local:5432/alphalens"
+  REDIS_URL: "redis://redis.alphalens.svc.cluster.local:6379/0"
+  KAFKA_SERVERS: "kafka.alphalens.svc.cluster.local:9092"
+  MLFLOW_TRACKING_URI: "http://mlflow.alphalens.svc.cluster.local:5000"
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"

@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alphalens-cpu-worker
+  namespace: alphalens
+  labels:
+    app: alphalens-cpu
+    component: orchestration-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: alphalens-cpu
+  template:
+    metadata:
+      labels:
+        app: alphalens-cpu
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                - m6i.4xlarge
+      containers:
+      - name: worker
+        image: alphalens:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "alphalens.orchestration.graph"]
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4"
+          limits:
+            memory: "16Gi"
+            cpu: "8"
+        envFrom:
+        - configMapRef:
+            name: alphalens-config
+        - secretRef:
+            name: alphalens-secrets

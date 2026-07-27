@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: alphalens
+
+resources:
+  - 00-namespace.yaml
+  - 01-configmap.yaml
+  - 02-secrets.yaml
+  - 03-mlflow-tracking-server.yaml
+  - 04-cpu-worker-deployment.yaml
+  - 05-gpu-learner-job.yaml
+  - 06-timescaledb-statefulset.yaml
+
+commonLabels:
+  project: alphalens
+  managed-by: kustomize

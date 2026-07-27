@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alphalens-gpu-training-job
+  namespace: alphalens
+  labels:
+    app: alphalens-gpu
+    component: deep-learning-learner
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: alphalens-gpu
+    spec:
+      restartPolicy: OnFailure
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                - p3.8xlarge
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: learner
+        image: alphalens:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "alphalens.agents.deep_learning_node"]
+        resources:
+          requests:
+            memory: "32Gi"
+            cpu: "8"
+            nvidia.com/gpu: "4"
+          limits:
+            memory: "64Gi"
+            cpu: "16"
+            nvidia.com/gpu: "4"
+        envFrom:
+        - configMapRef:
+            name: alphalens-config
+        - secretRef:
+            name: alphalens-secrets

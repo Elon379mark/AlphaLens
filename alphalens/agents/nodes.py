@@ -56,8 +56,11 @@ except ImportError:
 
 import base64
 
+from alphalens.deployment.mlops import MLflowTracker
+
 load_dotenv()
 logger = logging.getLogger(__name__)
+_mlflow_tracker = MLflowTracker()
 
 from alphalens.agents.memory import AgentMemoryEngine
 from alphalens.core.utils import run_sync
@@ -297,6 +300,10 @@ def literature_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
     run_sync(_memory_engine.add_episode_log(run_id, "literature_agent", "INFO", log_message))
 
+    # MLOps experiment tracking
+    _mlflow_tracker.start_run(run_name=f"Hypothesis_{hypothesis.hypothesis_id}")
+    _mlflow_tracker.log_hypothesis(hypothesis)
+
     # §5.1: Protobuf event log — serialize hypothesis for inter-agent communication
     proto_bytes = _log_protobuf_event(
         sender="literature_agent",
@@ -520,6 +527,9 @@ def signal_gen_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"[Signal Gen Agent] IC={ic:.4f}, ICIR={icir:.4f}, passes={passes_gate}")
 
     # 8. Memory Integration: Log episode and save semantic fact
+    # MLOps experiment tracking
+    _mlflow_tracker.log_signal_metrics(ic, icir, half_life, passes_gate)
+
     log_msg = f"Computed signal statistics: IC={ic:.4f}, ICIR={icir:.4f}, Half-Life={half_life:.1f}d, passes={passes_gate}"
     run_sync(_memory_engine.add_episode_log(run_id, "signal_gen_agent", "INFO", log_msg))
 
@@ -679,6 +689,9 @@ def causal_validation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         f"causal_link={causal_link}, FCI_latent={latent_confounder_detected}, "
         f"partial_R²={partial_r2:.4f}, Rosenbaum_robust={rosenbaum_robust}"
     )
+    # MLOps experiment tracking
+    _mlflow_tracker.log_causal_results(p_val, ate, rosenbaum_robust, partial_r2)
+
     run_sync(_memory_engine.add_episode_log(run_id, "causal_validation_agent", "INFO", log_msg))
 
     # §5.1: Protobuf event log
@@ -824,6 +837,11 @@ def backtest_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         f"§5.5 Backtest complete: Sharpe={sharpe:.2f}, MaxDD={max_dd * 100:.2f}%, "
         f"Return={total_ret * 100:.2f}%, survivorship_corrected={survivorship_corrected}"
     )
+    # MLOps experiment tracking
+    calmar = res.get("calmar_ratio", 0.0)
+    info_ratio = res.get("information_ratio", 0.0)
+    _mlflow_tracker.log_backtest_results(sharpe, max_dd, total_ret, calmar, info_ratio)
+
     run_sync(_memory_engine.add_episode_log(run_id, "backtest_agent", "INFO", log_msg))
 
     # §5.1: Protobuf event log
@@ -964,6 +982,10 @@ def portfolio_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     run_id = state.get("run_id", "default_run_id")
     # Log episode
     log_msg = f"Constructed optimal portfolio with weights: {dict(zip(asset_names, [f'{w:.1%}' for w in weights_bl]))} | CVaR={cvar_bl:.4f}"
+    # MLOps experiment tracking
+    _mlflow_tracker.log_portfolio_results(weights_bl.tolist(), asset_names, cvar_bl, risk_attr if 'risk_attr' in locals() else None)
+    _mlflow_tracker.end_run()
+
     run_sync(_memory_engine.add_episode_log(run_id, "portfolio_agent", "INFO", log_msg))
     # Store semantic fact
     if hyp:
