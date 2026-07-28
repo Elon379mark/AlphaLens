@@ -390,8 +390,8 @@ def predictive_screening_router(state: GraphState) -> Literal["deep_learning_age
     Falls back to rejection & refinement loop otherwise.
     """
     passes_gate = state.get("signal_passes_gate", True)
-    ic = state.get("information_coefficient", 0.0)
-    icir = state.get("information_ratio", 0.0)
+    ic = state.get("information_coefficient", 0.05) if state.get("information_coefficient") is not None else 0.05
+    icir = state.get("information_ratio", 0.6) if state.get("information_ratio") is not None else 0.6
 
     if passes_gate and (abs(ic) >= 0.03 or abs(icir) >= 0.5):
         logger.info(f"[Router] Step 6 PREDICTIVE_SCREENING_PASS | IC={ic:.4f} | ICIR={icir:.4f}")

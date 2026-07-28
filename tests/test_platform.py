@@ -142,7 +142,12 @@ class TestAlphaLensPlatform(unittest.TestCase):
             return {"hypothesis": "mock_hypothesis", "current_node": "literature_agent"}
 
         def signal_node(state: Dict[str, Any]) -> Dict[str, Any]:
-            return {"current_node": "signal_gen_agent"}
+            return {
+                "current_node": "signal_gen_agent",
+                "information_coefficient": 0.05,
+                "information_ratio": 0.6,
+                "signal_passes_gate": True,
+            }
 
         # Custom counter to verify refinement loop
         class Counter:
