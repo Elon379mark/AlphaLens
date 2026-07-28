@@ -5,15 +5,15 @@ Built module-by-module following the AlphaLens Execution Manual.
 
 ## Status
 - [x] Environment setup
-- [ ] Literature Agent
-- [ ] Signal Generation Agent
-- [ ] TFT Model
-- [ ] N-BEATS Model
-- [ ] PatchTST Model
-- [ ] GAT Model
-- [ ] Causal Inference
-- [ ] Portfolio Optimization
-- [ ] LangGraph Integration
+- [x] Literature Agent
+- [x] Signal Generation Agent
+- [x] TFT Model
+- [x] N-BEATS Model
+- [x] PatchTST Model
+- [x] GAT Model
+- [x] Causal Inference
+- [x] Portfolio Optimization
+- [x] LangGraph Integration
 
 ## Setup
 \`\`\`
